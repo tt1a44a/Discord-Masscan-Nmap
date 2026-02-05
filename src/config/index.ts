@@ -17,5 +17,8 @@ export const config = {
   guildId: process.env.DISCORD_GUILD_ID ?? "",
   masscanBin: process.env.MASSCAN_BIN ?? "masscan",
   nmapBin: process.env.NMAP_BIN ?? "nmap",
-  workDir: process.env.WORK_DIR ?? "/tmp/scan-bot"
+  workDir: process.env.WORK_DIR ?? "/tmp/scan-bot",
+  webUsername: process.env.UI_USERNAME ?? "",
+  webPasswordHash: process.env.UI_PASSWORD_HASH ?? "",
+  webPort: parseInt(process.env.WEB_PORT ?? "3000", 10)
 };

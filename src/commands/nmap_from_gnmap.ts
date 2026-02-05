@@ -7,11 +7,12 @@ import {
 import { mkdir, readFile, stat, writeFile } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
+import { spawn } from "child_process";
 
 import type { SlashCommand } from "../types/index.js";
 import { log } from "../services/logging.js";
 import { scanManager } from "../services/scanManager.js";
-import { chunkString, safeString, splitFlags } from "../utils/validation.js";
+import { safeString, splitFlags } from "../utils/validation.js";
 import { safeDefer, safeFollowUp } from "../utils/discord.js";
 import { config } from "../config/index.js";
 import { fileExists } from "../utils/fs.js";
@@ -150,17 +151,6 @@ async function execute(interaction: ChatInputCommandInteraction) {
       /* ignore */
     }
   }
-}
-
-function getHelp(): Promise<string> {
-  return new Promise((resolve) => {
-    const proc = spawn("nmap", ["-h"]);
-    let buf = "";
-    proc.stdout.on("data", (c) => (buf += c.toString()));
-    proc.stderr.on("data", (c) => (buf += c.toString()));
-    proc.on("close", () => resolve(buf));
-    proc.on("error", () => resolve("failed to retrieve nmap help"));
-  });
 }
 
 function trimToDiscord(text: string): string {

@@ -13,10 +13,16 @@
     "deploy:commands": "tsx scripts/deploy-commands.ts"
   },
   "dependencies": {
+    "bcrypt": "^5.1.1",
     "discord.js": "^14.15.3",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1"
   },
   "devDependencies": {
+    "@types/bcrypt": "^5.0.2",
+    "@types/express": "^5.0.0",
+    "@types/multer": "^1.4.12",
     "@types/node": "^22.9.1",
     "@typescript-eslint/eslint-plugin": "^8.11.0",
     "@typescript-eslint/parser": "^8.11.0",
