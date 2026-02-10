@@ -3,8 +3,8 @@ FROM node:20-slim AS builder
 
 WORKDIR /app
 
-COPY package.json package-lock.json* pnpm-lock.yaml* yarn.lock* ./
-RUN npm ci
+COPY package.json package-lock.json* ./
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 COPY tsconfig.json ./
 COPY src ./src
@@ -43,8 +43,8 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
 
-# Create work directory with correct permissions.
-RUN mkdir -p /tmp/scan-bot && chown scanbot:scanbot /tmp/scan-bot
+# Create work and log directories with correct permissions.
+RUN mkdir -p /tmp/scan-bot/logs && chown -R scanbot:scanbot /tmp/scan-bot
 
 USER scanbot
 

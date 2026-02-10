@@ -1,7 +1,10 @@
+import { join } from "path";
+
 import type { ManagedScan, ScanKind, ScanRequest } from "./scanner.js";
 import { startManagedScan } from "./scanner.js";
 import { log } from "./logging.js";
 import { config } from "../config/index.js";
+import { archiveScan } from "./archive.js";
 
 /** Maximum number of scans running at the same time (all users combined). */
 const MAX_CONCURRENT_GLOBAL = config.maxConcurrentScans;
@@ -110,13 +113,32 @@ class ScanManager {
   // ── Private ────────────────────────────────────────────────────────────────
 
   private launch(user: string, request: ScanRequest): ManagedScan {
+    const startedAt = Date.now();
     const managed = startManagedScan(request);
     this.scans.set(managed.id, { user, kind: request.kind, managed });
 
-    managed.result.finally(() => {
-      this.scans.delete(managed.id);
-      this.drain();
-    });
+    managed.result
+      .then((result) => {
+        // Archive scan results to persistent log directory.
+        void archiveScan({
+          scanId: managed.id,
+          user,
+          tool: request.kind,
+          args: request.args,
+          exitCode: result.exitCode,
+          durationMs: Date.now() - startedAt,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          workDir: join(config.workDir, managed.id)
+        });
+      })
+      .catch(() => {
+        // Scan failed — nothing to archive.
+      })
+      .finally(() => {
+        this.scans.delete(managed.id);
+        this.drain();
+      });
 
     log.info("scan started", {
       id: managed.id,

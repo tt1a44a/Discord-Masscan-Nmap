@@ -14,7 +14,7 @@ services:
         soft: 1048576
         hard: 1048576
     volumes:
-      - scan-results:/tmp/scan-bot
+      - scan-data:/tmp/scan-bot
 
 volumes:
-  scan-results:
+  scan-data:

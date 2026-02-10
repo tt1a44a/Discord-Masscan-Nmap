@@ -39,6 +39,7 @@ export const config = {
   masscanBin: process.env.MASSCAN_BIN ?? "masscan",
   nmapBin: process.env.NMAP_BIN ?? "nmap",
   workDir: process.env.WORK_DIR ?? `${tmpdir()}/scan-bot`,
+  logDir: process.env.SCAN_LOG_DIR ?? `${tmpdir()}/scan-bot/logs`,
   webUsername: process.env.UI_USERNAME ?? "",
   webPasswordHash: process.env.UI_PASSWORD_HASH ?? "",
   webPort: safeParseInt(process.env.WEB_PORT, 3000),
