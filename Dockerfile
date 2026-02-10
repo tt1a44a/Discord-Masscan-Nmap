@@ -6,7 +6,7 @@ WORKDIR /app
 COPY package.json package-lock.json* pnpm-lock.yaml* yarn.lock* ./
 RUN npm ci
 
-COPY tsconfig.json .eslintrc.cjs .prettierrc ./
+COPY tsconfig.json ./
 COPY src ./src
 COPY scripts ./scripts
 
