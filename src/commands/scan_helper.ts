@@ -14,10 +14,11 @@ import { randomUUID } from "crypto";
 import type { SlashCommand } from "../types/index.js";
 import { log } from "../services/logging.js";
 import { scanManager } from "../services/scanManager.js";
-import { safeString, splitFlags } from "../utils/validation.js";
-import { logDiscordError, safeDefer, safeEdit, safeFollowUp } from "../utils/discord.js";
+import { safeString, splitFlags, trimToLimit } from "../utils/validation.js";
+import { safeDefer, safeFollowUp } from "../utils/discord.js";
 import { config } from "../config/index.js";
 import { fileExists } from "../utils/fs.js";
+import { validateFlags, validateTarget } from "../utils/sanitize.js";
 
 const data = new SlashCommandBuilder()
   .setName("scan_helper")
@@ -62,6 +63,13 @@ async function execute(interaction: ChatInputCommandInteraction) {
   const flags = interaction.options.getString("flags", false);
   const tool = interaction.options.getString("tool", false);
 
+  // Validate target against allowlist.
+  const targetCheck = validateTarget(target);
+  if (!targetCheck.ok) {
+    await interaction.editReply(targetCheck.reason);
+    return;
+  }
+
   const presetMenu = new StringSelectMenuBuilder()
     .setCustomId("scan_helper:preset")
     .setPlaceholder("Choose a preset (or skip)")
@@ -77,21 +85,17 @@ async function execute(interaction: ChatInputCommandInteraction) {
     new ButtonBuilder().setCustomId("scan_helper:run_nmap").setLabel("Run nmap").setStyle(ButtonStyle.Secondary)
   );
 
-  await interaction.editReply({
+  const reply = await interaction.editReply({
     content: `Target: ${target}\nPorts: ${ports ?? "(none)"}\nFlags: ${flags ?? "(none)"}\nPick a preset or run directly:`,
     components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(presetMenu), runButtons]
   });
 
-  const collector = interaction.channel?.createMessageComponentCollector({
+  // Scope collector to the specific reply message to avoid cross-talk in busy channels.
+  const collector = reply.createMessageComponentCollector({
     filter: (i) => i.user.id === interaction.user.id && i.customId.startsWith("scan_helper:"),
     time: 30_000,
     max: 1
   });
-
-  if (!collector) {
-    await interaction.editReply({ content: "Collector unavailable.", components: [] });
-    return;
-  }
 
   collector.on("collect", async (i) => {
     try {
@@ -110,14 +114,17 @@ async function execute(interaction: ChatInputCommandInteraction) {
 
       if (flags) args.push(...splitFlags(flags));
       if (ports) {
-        if (chosenTool === "masscan") {
-          args.push("-p", safeString(ports, 100));
-        } else {
-          args.push("-p", safeString(ports, 100));
-        }
+        args.push("-p", safeString(ports, 100));
       }
 
       args.push(target);
+
+      // Validate user-provided flags BEFORE adding internal -oG flag.
+      const flagCheck = validateFlags(args, chosenTool as "masscan" | "nmap");
+      if (!flagCheck.ok) {
+        await interaction.editReply({ content: flagCheck.reason, components: [] });
+        return;
+      }
 
       const outDir = join(config.workDir, randomUUID());
       await mkdir(outDir, { recursive: true });
@@ -136,13 +143,13 @@ async function execute(interaction: ChatInputCommandInteraction) {
         const now = Date.now();
         buffer += `\n[${label}] ${data}`;
         if (buffer.length > 1200 || now - lastSend > 2000) {
-          await safeFollowUp(interaction, trimToDiscord(buffer));
+          await safeFollowUp(interaction, trimToLimit(buffer));
           buffer = "";
           lastSend = now;
         }
       };
 
-      const managed = scanManager.start(interaction.user.id, {
+      const startResult = scanManager.start(interaction.user.id, {
         kind: chosenTool as "masscan" | "nmap",
         args,
         onData: ({ stream, data }) => {
@@ -150,7 +157,12 @@ async function execute(interaction: ChatInputCommandInteraction) {
         }
       });
 
-      const result = await managed.result;
+      if (!startResult.ok) {
+        await interaction.editReply({ content: startResult.reason, components: [] });
+        return;
+      }
+
+      const result = await startResult.managed.result;
 
       const stdoutSnippet = result.stdout.slice(0, 1500) || "(empty)";
       const stderrSnippet = result.stderr.slice(0, 800) || "(empty)";
@@ -183,8 +195,7 @@ async function execute(interaction: ChatInputCommandInteraction) {
         .filter(Boolean)
         .join("\n");
 
-      const trimmed =
-        content.length > 1800 ? content.slice(0, 1800) + "\n...[truncated]..." : content;
+      const trimmed = trimToLimit(content, 1800);
 
       // final follow-up so it appears at the end with attachment
       await safeFollowUp(interaction, trimmed, files);
@@ -203,36 +214,16 @@ async function execute(interaction: ChatInputCommandInteraction) {
 
   collector.on("end", async (collected) => {
     if (collected.size === 0) {
-      await interaction.editReply({
-        content: "Timed out waiting for selection.",
-        components: []
-      });
+      try {
+        await interaction.editReply({
+          content: "Timed out waiting for selection.",
+          components: []
+        });
+      } catch {
+        // Interaction token may have expired — safe to ignore.
+      }
     }
   });
-}
-
-function trimToDiscord(text: string): string {
-  if (text.length <= 1900) return text;
-  return text.slice(0, 1900) + "\n...[truncated]...";
-}
-
-async function safeEditPayload(
-  interaction: ChatInputCommandInteraction,
-  payload: { content: string; components?: []; files?: string[] }
-) {
-  try {
-    const files =
-      payload.files && payload.files.length > 0
-        ? payload.files.map((p) => ({ attachment: p }))
-        : undefined;
-    const content =
-      payload.content.length > 1800
-        ? payload.content.slice(0, 1800) + "\n...[truncated]..."
-        : payload.content;
-    await interaction.editReply({ content, components: payload.components, files });
-  } catch (err) {
-    logDiscordError("scan_helper editReply failed", err);
-  }
 }
 
 export const scanHelperCommand: SlashCommand = {

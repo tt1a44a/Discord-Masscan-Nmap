@@ -2,14 +2,8 @@ import { AttachmentBuilder, type ChatInputCommandInteraction } from "discord.js"
 
 import { log } from "../services/logging.js";
 
-export function maskToken(token?: string) {
-  if (!token) return "";
-  if (token.length < 12) return "***";
-  return `${token.slice(0, 4)}***${token.slice(-4)}`;
-}
-
 export function logDiscordError(context: string, err: unknown) {
-  const e = err as any;
+  const e = err as Record<string, unknown> | null;
   log.error(context, {
     code: e?.code,
     status: e?.status,
@@ -39,21 +33,5 @@ export async function safeFollowUp(
     await interaction.followUp({ content, ephemeral: true, files: attachments });
   } catch (err) {
     logDiscordError("followUp failed", err);
-  }
-}
-
-export async function safeEdit(
-  interaction: ChatInputCommandInteraction,
-  content: string,
-  filePaths?: string[]
-): Promise<void> {
-  try {
-    const files =
-      filePaths && filePaths.length > 0
-        ? filePaths.map((p) => new AttachmentBuilder(p))
-        : undefined;
-    await interaction.editReply({ content, files });
-  } catch (err) {
-    logDiscordError("editReply failed", err);
   }
 }

@@ -15,3 +15,9 @@ export function chunkString(input: string, size = 1800): string[] {
   }
   return chunks;
 }
+
+/** Trim text to a custom limit (with truncation marker). Defaults to Discord's ~2000 char limit. */
+export function trimToLimit(text: string, limit = 1900): string {
+  if (text.length <= limit) return text;
+  return text.slice(0, limit) + "\n...[truncated]...";
+}

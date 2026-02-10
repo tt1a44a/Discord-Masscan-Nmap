@@ -3,7 +3,6 @@ services:
     build: .
     image: discord-scan-bot
     container_name: discord-scan-bot
-    user: "0"
     env_file:
       - .env
     restart: unless-stopped
@@ -14,4 +13,8 @@ services:
       nofile:
         soft: 1048576
         hard: 1048576
-    command: ["npm", "start"]
+    volumes:
+      - scan-results:/tmp/scan-bot
+
+volumes:
+  scan-results:

@@ -12,16 +12,16 @@ const __dirname = dirname(__filename);
 
 export function startWebServer() {
   const app = express();
-  const port = parseInt(process.env.WEB_PORT ?? "3000", 10);
+  const port = config.webPort;
 
   if (!config.webUsername || !config.webPasswordHash) {
     log.warn("Web UI disabled: UI_USERNAME or UI_PASSWORD_HASH missing");
     return;
   }
 
-  // Middleware
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
+  // Middleware — limit request body sizes to prevent abuse.
+  app.use(express.json({ limit: "1mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
   // Static assets (public folder)
   const publicPath = join(__dirname, "../../public");

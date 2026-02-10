@@ -11,10 +11,11 @@ import { spawn } from "child_process";
 import type { SlashCommand } from "../types/index.js";
 import { log } from "../services/logging.js";
 import { scanManager } from "../services/scanManager.js";
-import { chunkString, safeString, splitFlags } from "../utils/validation.js";
-import { logDiscordError, safeDefer, safeEdit, safeFollowUp } from "../utils/discord.js";
+import { chunkString, safeString, splitFlags, trimToLimit } from "../utils/validation.js";
+import { safeDefer, safeFollowUp } from "../utils/discord.js";
 import { config } from "../config/index.js";
 import { fileExists } from "../utils/fs.js";
+import { validateFlags, validateTarget } from "../utils/sanitize.js";
 
 const data = new SlashCommandBuilder()
   .setName("nmap")
@@ -61,6 +62,13 @@ async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
+  // Validate target against allowlist.
+  const targetCheck = validateTarget(target);
+  if (!targetCheck.ok) {
+    await interaction.editReply(targetCheck.reason);
+    return;
+  }
+
   log.info("nmap requested", { user: interaction.user.id, target, ports, flags, extra });
 
   const args: string[] = [];
@@ -75,6 +83,13 @@ async function execute(interaction: ChatInputCommandInteraction) {
   }
   args.push(target);
 
+  // Validate assembled flags against blocklist.
+  const flagCheck = validateFlags(args, "nmap");
+  if (!flagCheck.ok) {
+    await interaction.editReply(flagCheck.reason);
+    return;
+  }
+
   const outDir = join(config.workDir, randomUUID());
   await mkdir(outDir, { recursive: true });
   const outFile = join(outDir, "nmap-results.gnmap");
@@ -86,13 +101,13 @@ async function execute(interaction: ChatInputCommandInteraction) {
     const now = Date.now();
     buffer += `\n[${label}] ${data}`;
     if (buffer.length > 1200 || now - lastSend > 2000) {
-      await safeFollowUp(interaction, trimToDiscord(buffer));
+      await safeFollowUp(interaction, trimToLimit(buffer));
       buffer = "";
       lastSend = now;
     }
   };
 
-  const managed = scanManager.start(interaction.user.id, {
+  const startResult = scanManager.start(interaction.user.id, {
     kind: "nmap",
     args,
     onData: ({ stream, data }) => {
@@ -100,7 +115,12 @@ async function execute(interaction: ChatInputCommandInteraction) {
     }
   });
 
-  const result = await managed.result;
+  if (!startResult.ok) {
+    await interaction.editReply(startResult.reason);
+    return;
+  }
+
+  const result = await startResult.managed.result;
 
   let fileSnippet = "(no file)";
   let fileSize = 0;
@@ -126,9 +146,7 @@ async function execute(interaction: ChatInputCommandInteraction) {
       : "file: not written",
     `stdout:\n\`\`\`\n${stdoutSnippet}\n\`\`\``,
     `stderr:\n\`\`\`\n${stderrSnippet}\n\`\`\``
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ].join("\n");
 
   const content = trimToLimit(rawContent, 1800);
 
@@ -140,23 +158,17 @@ async function execute(interaction: ChatInputCommandInteraction) {
 
 function getHelp(): Promise<string> {
   return new Promise((resolve) => {
-    const proc = spawn("nmap", ["-h"]);
+    const proc = spawn(config.nmapBin, ["-h"]);
     let buf = "";
-    proc.stdout.on("data", (c) => (buf += c.toString()));
-    proc.stderr.on("data", (c) => (buf += c.toString()));
-    proc.on("close", () => resolve(buf));
-    proc.on("error", () => resolve("failed to retrieve nmap help"));
+    const timeout = setTimeout(() => {
+      proc.kill();
+      resolve(buf || "nmap -h timed out");
+    }, 10_000);
+    proc.stdout.on("data", (c) => (buf += c.toString("utf8")));
+    proc.stderr.on("data", (c) => (buf += c.toString("utf8")));
+    proc.on("close", () => { clearTimeout(timeout); resolve(buf); });
+    proc.on("error", () => { clearTimeout(timeout); resolve("failed to retrieve nmap help"); });
   });
-}
-
-function trimToDiscord(text: string): string {
-  if (text.length <= 1900) return text;
-  return text.slice(0, 1900) + "\n...[truncated]...";
-}
-
-function trimToLimit(text: string, limit = 1900): string {
-  if (text.length <= limit) return text;
-  return text.slice(0, limit) + "\n...[truncated]...";
 }
 
 export const nmapCommand: SlashCommand = {

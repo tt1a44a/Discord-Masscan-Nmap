@@ -1,8 +1,10 @@
-import { Client, Events, GatewayIntentBits } from "discord.js";
+import { Client, Events, GatewayIntentBits, MessageFlags } from "discord.js";
 
 import { commandMap } from "./commands/index.js";
 import { config } from "./config/index.js";
 import { log } from "./services/logging.js";
+import { startWebServer } from "./web/server.js";
+import { checkAccess } from "./utils/access.js";
 
 async function main() {
   if (!config.token) {
@@ -19,7 +21,11 @@ async function main() {
     if (!interaction.isChatInputCommand()) return;
     const command = commandMap.get(interaction.commandName);
     if (!command) {
-      await interaction.reply({ content: "Unknown command", ephemeral: true });
+      try {
+        await interaction.reply({ content: "Unknown command", ephemeral: true });
+      } catch (err) {
+        log.warn("Failed to reply to unknown command", { err: String(err) });
+      }
       return;
     }
 
@@ -30,6 +36,9 @@ async function main() {
       channel: interaction.channelId,
       guild: interaction.guildId
     });
+
+    // Role/user-based access control — checked before every command.
+    if (!(await checkAccess(interaction))) return;
 
     try {
       await command.execute(interaction);
@@ -44,7 +53,7 @@ async function main() {
         } else {
           await interaction.reply({
             content: "There was an error executing that command.",
-            flags: 1 << 6 // ephemeral
+            flags: MessageFlags.Ephemeral
           });
         }
       } catch (err) {
@@ -54,11 +63,23 @@ async function main() {
     }
   });
 
+  // Start optional web server (no-ops if credentials are not set).
+  startWebServer();
+
   await client.login(config.token);
+
+  // Graceful shutdown.
+  const shutdown = () => {
+    log.info("Shutting down...");
+    client.destroy();
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 }
 
 main().catch((err) => {
   // eslint-disable-next-line no-console
   console.error("Failed to start bot", err);
-  process.exit(1);
+  process.exitCode = 1;
 });

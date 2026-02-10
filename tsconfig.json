@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "Node",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "lib": ["ES2022"],
     "esModuleInterop": true,
     "strict": true,
@@ -10,6 +10,8 @@
     "resolveJsonModule": true,
     "outDir": "dist",
     "rootDir": "src",
+    "declaration": true,
+    "sourceMap": true,
     "forceConsistentCasingInFileNames": true
   },
   "include": ["src/**/*"]

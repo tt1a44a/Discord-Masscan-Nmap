@@ -7,15 +7,14 @@ import {
 import { mkdir, readFile, stat, writeFile } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
-import { spawn } from "child_process";
-
 import type { SlashCommand } from "../types/index.js";
 import { log } from "../services/logging.js";
 import { scanManager } from "../services/scanManager.js";
-import { safeString, splitFlags } from "../utils/validation.js";
+import { safeString, splitFlags, trimToLimit } from "../utils/validation.js";
 import { safeDefer, safeFollowUp } from "../utils/discord.js";
 import { config } from "../config/index.js";
 import { fileExists } from "../utils/fs.js";
+import { validateFlags, validateTarget } from "../utils/sanitize.js";
 
 const data = new SlashCommandBuilder()
   .setName("nmap_from_gnmap")
@@ -26,7 +25,7 @@ const data = new SlashCommandBuilder()
   .addStringOption((option) =>
     option
       .setName("flags")
-      .setDescription('Nmap flags (default: "-A -sV")')
+      .setDescription('Nmap flags (default: "-sV")')
       .setRequired(false)
   )
   .addStringOption((option) =>
@@ -37,16 +36,32 @@ async function execute(interaction: ChatInputCommandInteraction) {
   if (!(await safeDefer(interaction))) return;
 
   const attachment = interaction.options.getAttachment("gnmap", true);
-  const flags = interaction.options.getString("flags", false) ?? "-A -sV";
+  const flags = interaction.options.getString("flags", false) ?? "-sV";
   const ports = interaction.options.getString("ports", false);
+
+  // Guard against excessively large attachments (max 5 MB).
+  const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+  if (attachment.size > MAX_ATTACHMENT_BYTES) {
+    await interaction.editReply(
+      `Attachment too large (${(attachment.size / 1024 / 1024).toFixed(1)} MB). Maximum is 5 MB.`
+    );
+    return;
+  }
 
   try {
     const workDir = join(config.workDir, randomUUID());
     await mkdir(workDir, { recursive: true });
     const gnmapPath = join(workDir, "input.gnmap");
 
-    // Download attachment
-    const res = await fetch(attachment.url);
+    // Download attachment with timeout.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    let res: Response;
+    try {
+      res = await fetch(attachment.url, { signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
     if (!res.ok) {
       await interaction.editReply("Failed to download attachment.");
       return;
@@ -68,11 +83,30 @@ async function execute(interaction: ChatInputCommandInteraction) {
     // Prepare output
     const outFile = join(workDir, "nmap-reshosts.gnmap");
 
-    // Build args
-    const args: string[] = [...splitFlags(flags), "-iL", hostsFile, "-oG", outFile];
-    if (ports) {
-      args.push("-p", safeString(ports, 200));
+    // Validate each extracted host against the target allowlist.
+    for (const host of uniqueHosts) {
+      const hostCheck = validateTarget(host);
+      if (!hostCheck.ok) {
+        await interaction.editReply(`Host from gnmap blocked: ${hostCheck.reason}`);
+        return;
+      }
     }
+
+    // Validate user-provided flags BEFORE adding internal flags (-iL, -oG)
+    // so the blocklist doesn't reject our own bot-generated arguments.
+    const userArgs: string[] = [...splitFlags(flags)];
+    if (ports) {
+      userArgs.push("-p", safeString(ports, 200));
+    }
+
+    const flagCheck = validateFlags(userArgs, "nmap");
+    if (!flagCheck.ok) {
+      await interaction.editReply(flagCheck.reason);
+      return;
+    }
+
+    // Build full args with internal flags appended after validation.
+    const args: string[] = [...userArgs, "-iL", hostsFile, "-oG", outFile];
 
     log.info("nmap_from_gnmap requested", {
       user: interaction.user.id,
@@ -87,13 +121,13 @@ async function execute(interaction: ChatInputCommandInteraction) {
       const now = Date.now();
       buffer += `\n[${label}] ${data}`;
       if (buffer.length > 1200 || now - lastSend > 2000) {
-        await safeFollowUp(interaction, trimToDiscord(buffer));
+        await safeFollowUp(interaction, trimToLimit(buffer));
         buffer = "";
         lastSend = now;
       }
     };
 
-    const managed = scanManager.start(interaction.user.id, {
+    const startResult = scanManager.start(interaction.user.id, {
       kind: "nmap",
       args,
       onData: ({ stream, data }) => {
@@ -101,7 +135,12 @@ async function execute(interaction: ChatInputCommandInteraction) {
       }
     });
 
-    const result = await managed.result;
+    if (!startResult.ok) {
+      await interaction.editReply(startResult.reason);
+      return;
+    }
+
+    const result = await startResult.managed.result;
 
     if (buffer.trim().length > 0) {
       await safeFollowUp(interaction, trimToDiscord(buffer));
@@ -142,7 +181,11 @@ async function execute(interaction: ChatInputCommandInteraction) {
         ? [new AttachmentBuilder(outFile).setName("nmap-reshosts.gnmap")]
         : undefined;
 
-    await interaction.followUp({ content, files, ephemeral: true });
+    try {
+      await interaction.followUp({ content, files, ephemeral: true });
+    } catch (err) {
+      log.warn("nmap_from_gnmap followUp failed", { err: String(err) });
+    }
   } catch (err) {
     log.error("nmap_from_gnmap failed", { err: String(err) });
     try {
@@ -151,16 +194,6 @@ async function execute(interaction: ChatInputCommandInteraction) {
       /* ignore */
     }
   }
-}
-
-function trimToDiscord(text: string): string {
-  if (text.length <= 1900) return text;
-  return text.slice(0, 1900) + "\n...[truncated]...";
-}
-
-function trimToLimit(text: string, limit = 1900): string {
-  if (text.length <= limit) return text;
-  return text.slice(0, limit) + "\n...[truncated]...";
 }
 
 export const nmapFromGnmapCommand: SlashCommand = {
