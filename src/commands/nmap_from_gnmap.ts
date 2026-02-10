@@ -143,7 +143,7 @@ async function execute(interaction: ChatInputCommandInteraction) {
     const result = await startResult.managed.result;
 
     if (buffer.trim().length > 0) {
-      await safeFollowUp(interaction, trimToDiscord(buffer));
+      await safeFollowUp(interaction, trimToLimit(buffer));
     }
 
     const fileExistsFlag = await fileExists(outFile);

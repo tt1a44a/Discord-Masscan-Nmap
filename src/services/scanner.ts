@@ -45,13 +45,13 @@ export function startManagedScan(request: ScanRequest): ManagedScan {
     let stdout = "";
     let stderr = "";
 
-    proc.stdout.on("data", (chunk: Buffer) => {
-      const text = chunk.toString();
+    proc.stdout?.on("data", (chunk: Buffer) => {
+      const text = chunk.toString("utf8");
       stdout += text;
       request.onData?.({ stream: "stdout", data: text });
     });
-    proc.stderr.on("data", (chunk: Buffer) => {
-      const text = chunk.toString();
+    proc.stderr?.on("data", (chunk: Buffer) => {
+      const text = chunk.toString("utf8");
       stderr += text;
       request.onData?.({ stream: "stderr", data: text });
     });
